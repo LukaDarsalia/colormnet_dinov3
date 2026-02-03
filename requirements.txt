@@ -15,3 +15,4 @@ boto3
 transformers
 python-dotenv
 tqdm
+spatial-correlation-sampler
