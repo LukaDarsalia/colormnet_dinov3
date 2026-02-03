@@ -233,7 +233,11 @@ class ColorMNetTrainer:
                 if self.wandb is not None and self.local_rank == 0:
                     self.wandb.log({"val/pairs": wb_frames},step=it)
                     if video_frames and not video_logged:
-                        video = self.wandb.Video(np.stack(video_frames, axis=0), fps=val_video_fps, format="mp4")
+                        video_np = np.stack(video_frames, axis=0)
+                        # W&B expects (T, C, H, W) for numpy video data.
+                        if video_np.ndim == 4:
+                            video_np = np.transpose(video_np, (0, 3, 1, 2))
+                        video = self.wandb.Video(video_np, fps=val_video_fps, format="mp4")
                         self.wandb.log({"val/video_pairs": video}, step=it)
                         video_logged = True
 
