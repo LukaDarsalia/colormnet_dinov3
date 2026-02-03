@@ -14,7 +14,7 @@ output_artifact:
 
 s3:
   enabled: true
-  bucket: your-bucket
+  bucket: personal-data-science-data
   prefix: colormnet
   region: null
   endpoint_url: null
