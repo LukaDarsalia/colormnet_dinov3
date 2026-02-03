@@ -17,6 +17,8 @@ dino:
 training:
   exp_id: colormnet_dinov3_test
   progress_bar: true
+  val_no_grad: true
+  val_max_videos: 1
   log_val_video: true
   val_frame_stride: 1
   val_video_fps: 12

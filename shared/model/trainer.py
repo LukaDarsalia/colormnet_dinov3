@@ -90,6 +90,9 @@ class ColorMNetTrainer:
         if val_stride < 1:
             val_stride = 1
 
+        val_no_grad = bool(self.config.get('val_no_grad', False))
+        val_max_videos = int(self.config.get('val_max_videos', 0))
+
         log_val_video = bool(self.config.get('log_val_video', False))
         val_video_fps = int(self.config.get('val_video_fps', 12))
         val_video_max_frames = int(self.config.get('val_video_max_frames', 0))
@@ -98,120 +101,124 @@ class ColorMNetTrainer:
 
         avg_psnr = []
         wb_frames = []
+        vid_count = 0
 
-        # with torch.no_grad():
-        for vid_reader in val_loader:
-            clip_psnr = []
-            pred_video_frames = [] if should_log_video and not video_logged else None
-            loader = DataLoader(vid_reader, batch_size=1, shuffle=False, num_workers=2)
-            vid_name = vid_reader.vid_name
-            vid_length = len(loader)
-            # no need to count usage for LT if the video is not that long anyway
-            config['enable_long_term_count_usage'] = (
-                config['enable_long_term'] and
-                (vid_length
-                    / (config['max_mid_term_frames']-config['min_mid_term_frames'])
-                    * config['num_prototypes'])
-                >= config['max_long_term_elements']
-            )
+        context = torch.no_grad() if val_no_grad else torch.enable_grad()
+        with context:
+            for vid_reader in val_loader:
+                clip_psnr = []
+                pred_video_frames = [] if should_log_video and not video_logged else None
+                loader = DataLoader(vid_reader, batch_size=1, shuffle=False, num_workers=2)
+                vid_name = vid_reader.vid_name
+                vid_length = len(loader)
+                # no need to count usage for LT if the video is not that long anyway
+                config['enable_long_term_count_usage'] = (
+                    config['enable_long_term'] and
+                    (vid_length
+                        / (config['max_mid_term_frames']-config['min_mid_term_frames'])
+                        * config['num_prototypes'])
+                    >= config['max_long_term_elements']
+                )
 
-            mapper = MaskMapper()
-            processor = InferenceCore(self.model.module, config=config)
-            first_mask_loaded = False
+                mapper = MaskMapper()
+                processor = InferenceCore(self.model.module, config=config)
+                first_mask_loaded = False
 
-            t0 = 0
-            for ti, data in enumerate(loader):
-                t0 += 1 
-                if (t0-1) % val_stride != 0: # Do not validate every frame for speed up training
-                    continue
+                t0 = 0
+                for ti, data in enumerate(loader):
+                    t0 += 1 
+                    if (t0-1) % val_stride != 0: # Do not validate every frame for speed up training
+                        continue
 
-                with torch.cuda.amp.autocast(enabled=not config['benchmark']):
-                    rgb = data['rgb'].cuda()[0]
-                    msk = data.get('mask')
-                    msk = msk[:,1:3,:,:] if msk is not None else None
+                    with torch.cuda.amp.autocast(enabled=not config['benchmark']):
+                        rgb = data['rgb'].cuda()[0]
+                        msk = data.get('mask')
+                        msk = msk[:,1:3,:,:] if msk is not None else None
 
-                    info = data['info']
-                    frame = info['frame'][0]
-                    shape = info['shape']
-                    need_resize = info['need_resize'][0]
+                        info = data['info']
+                        frame = info['frame'][0]
+                        shape = info['shape']
+                        need_resize = info['need_resize'][0]
 
-                    """
-                    For timing see https://discuss.pytorch.org/t/how-to-measure-time-in-pytorch/26964
-                    Seems to be very similar in testing as my previous timing method 
-                    with two cuda sync + time.time() in STCN though 
-                    """
+                        """
+                        For timing see https://discuss.pytorch.org/t/how-to-measure-time-in-pytorch/26964
+                        Seems to be very similar in testing as my previous timing method 
+                        with two cuda sync + time.time() in STCN though 
+                        """
 
-                    if not first_mask_loaded:
+                        if not first_mask_loaded:
+                            if msk is not None:
+                                first_mask_loaded = True
+                            else:
+                                # no point to do anything without a mask
+                                continue
+
+                        if config['flip']:
+                            rgb = torch.flip(rgb, dims=[-1])
+                            msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+
+                        # Map possibly non-continuous labels to continuous ones
                         if msk is not None:
-                            first_mask_loaded = True
+                            msk = torch.Tensor(msk[0]).cuda()
+                            if need_resize:
+                                msk = vid_reader.resize_mask(msk.unsqueeze(0))[0]
+
+                            processor.set_all_labels(list(range(1,3)))
+                            labels = range(1,3)
                         else:
-                            # no point to do anything without a mask
-                            continue
-
-                    if config['flip']:
-                        rgb = torch.flip(rgb, dims=[-1])
-                        msk = torch.flip(msk, dims=[-1]) if msk is not None else None
-
-                    # Map possibly non-continuous labels to continuous ones
-                    if msk is not None:
-                        msk = torch.Tensor(msk[0]).cuda()
-                        if need_resize:
-                            msk = vid_reader.resize_mask(msk.unsqueeze(0))[0]
-
-                        processor.set_all_labels(list(range(1,3)))
-                        labels = range(1,3)
-                    else:
-                        labels = None
+                            labels = None
             
-                    # Run the model on this frame
-                    # print('******************* START %s *************'%ti)
-                    prob = processor.step(rgb, msk, labels, end=(ti==vid_length-1))
-                    # print('******************* END %s *************'%ti)
+                        # Run the model on this frame
+                        # print('******************* START %s *************'%ti)
+                        prob = processor.step(rgb, msk, labels, end=(ti==vid_length-1))
+                        # print('******************* END %s *************'%ti)
 
-                    # Upsample to original size if needed
-                    if need_resize:
-                        prob = F.interpolate(prob.unsqueeze(1), shape, mode='bilinear', align_corners=False)[:,0]
-                        rgb = F.interpolate(rgb.unsqueeze(1), shape, mode='bilinear', align_corners=False)[:,0]
+                        # Upsample to original size if needed
+                        if need_resize:
+                            prob = F.interpolate(prob.unsqueeze(1), shape, mode='bilinear', align_corners=False)[:,0]
+                            rgb = F.interpolate(rgb.unsqueeze(1), shape, mode='bilinear', align_corners=False)[:,0]
 
-                    if config['flip']:
-                        prob = torch.flip(prob, dims=[-1])
+                        if config['flip']:
+                            prob = torch.flip(prob, dims=[-1])
 
-                    # Save the mask
-                    if info['save'][0]:
-                        out_mask_final = lab2rgb_transform_PIL(torch.cat([rgb[:1,:,:], prob], dim=0))
-                        out_mask_final = out_mask_final * 255
-                        out_mask_final = out_mask_final.astype(np.uint8)
-                        
-                        out_img = np.array(Image.fromarray(out_mask_final))
+                        # Save the mask
+                        if info['save'][0]:
+                            out_mask_final = lab2rgb_transform_PIL(torch.cat([rgb[:1,:,:], prob], dim=0))
+                            out_mask_final = out_mask_final * 255
+                            out_mask_final = out_mask_final.astype(np.uint8)
+                            
+                            out_img = np.array(Image.fromarray(out_mask_final))
  
-                        gt_folder = self.config['validation_root']
-                        gt_path = os.path.join(gt_folder, info['vid_name'][0], info['frame'][0])
-                        gt_img = np.array(Image.open(gt_path))
-                        psnr = calculate_psnr(gt_img, out_img)
-                        # avg_psnr.append(psnr)
-                        clip_psnr.append(psnr)
+                            gt_folder = self.config['validation_root']
+                            gt_path = os.path.join(gt_folder, info['vid_name'][0], info['frame'][0])
+                            gt_img = np.array(Image.open(gt_path))
+                            psnr = calculate_psnr(gt_img, out_img)
+                            # avg_psnr.append(psnr)
+                            clip_psnr.append(psnr)
 
-                        save_shape = (384, 384) # resize to save wandb space
-                        out_img = np.array(Image.fromarray(out_img).resize(save_shape, resample=0))
-                        gt_img = np.array(Image.fromarray(gt_img).resize(save_shape, resample=0))
+                            save_shape = (384, 384) # resize to save wandb space
+                            out_img = np.array(Image.fromarray(out_img).resize(save_shape, resample=0))
+                            gt_img = np.array(Image.fromarray(gt_img).resize(save_shape, resample=0))
 
-                        wb_frames.append(self.wandb.Image(out_img, caption="Pred_%s_it%s"%(t0, it)))
-                        wb_frames.append(self.wandb.Image(gt_img, caption="GT%s_it%s"%(t0, it)))
+                            wb_frames.append(self.wandb.Image(out_img, caption="Pred_%s_it%s"%(t0, it)))
+                            wb_frames.append(self.wandb.Image(gt_img, caption="GT%s_it%s"%(t0, it)))
 
-                        if pred_video_frames is not None:
-                            if val_video_max_frames <= 0 or len(pred_video_frames) < val_video_max_frames:
-                                pred_video_frames.append(out_img)
+                            if pred_video_frames is not None:
+                                if val_video_max_frames <= 0 or len(pred_video_frames) < val_video_max_frames:
+                                    pred_video_frames.append(out_img)
 
-            if self.wandb is not None and self.local_rank == 0:
-                self.wandb.log({"val/pairs": wb_frames},step=it)
-                if pred_video_frames and not video_logged:
-                    video = self.wandb.Video(np.stack(pred_video_frames, axis=0), fps=val_video_fps, format="mp4")
-                    self.wandb.log({"val/video_pred": video}, step=it)
-                    video_logged = True
+                if self.wandb is not None and self.local_rank == 0:
+                    self.wandb.log({"val/pairs": wb_frames},step=it)
+                    if pred_video_frames and not video_logged:
+                        video = self.wandb.Video(np.stack(pred_video_frames, axis=0), fps=val_video_fps, format="mp4")
+                        self.wandb.log({"val/video_pred": video}, step=it)
+                        video_logged = True
 
-
-            print('current item: %s clip_psnr is: %s'%(info['vid_name'][0], np.mean(clip_psnr)))
-            avg_psnr += clip_psnr 
+                print('current item: %s clip_psnr is: %s'%(info['vid_name'][0], np.mean(clip_psnr)))
+                avg_psnr += clip_psnr
+                vid_count += 1
+                if val_max_videos > 0 and vid_count >= val_max_videos:
+                    break
                     
         self.wandb.log({'val/psnr': np.mean(avg_psnr)}, step=it)
         self.logger.log_scalar('val/psnr', np.mean(avg_psnr), it)

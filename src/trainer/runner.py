@@ -66,6 +66,8 @@ def _build_base_config(cfg: dict, data_paths: dict) -> dict:
         "debug": bool(training.get("debug", False)),
         "progress_bar": bool(training.get("progress_bar", False)),
         "val_frame_stride": int(training.get("val_frame_stride", 10)),
+        "val_no_grad": bool(training.get("val_no_grad", False)),
+        "val_max_videos": int(training.get("val_max_videos", 0)),
         "log_val_video": bool(training.get("log_val_video", False)),
         "val_video_fps": int(training.get("val_video_fps", 12)),
         "val_video_max_frames": int(training.get("val_video_max_frames", 0)),

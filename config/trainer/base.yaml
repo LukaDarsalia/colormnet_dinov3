@@ -37,6 +37,8 @@ training:
   debug: false
   progress_bar: false
   val_frame_stride: 10
+  val_no_grad: false
+  val_max_videos: 0
   log_val_video: false
   val_video_fps: 12
   val_video_max_frames: 0
