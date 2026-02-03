@@ -19,7 +19,7 @@ training:
   val_no_grad: true
   log_val_video: true
   val_frame_stride: 1
-  val_video_fps: 24
+  val_video_fps: 15
   val_video_max_frames: 0
   log_text_interval: 12
   log_image_interval: 12
