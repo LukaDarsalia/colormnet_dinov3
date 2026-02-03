@@ -79,11 +79,16 @@ def resolve_dataset_artifact(run, artifact_ref: str) -> Tuple[wandb.Artifact, st
             except json.JSONDecodeError:
                 s3_info = {}
             datasets = (s3_info or {}).get("datasets", {})
+            if not datasets and (s3_info or {}).get("upstream"):
+                upstream = (s3_info or {}).get("upstream") or {}
+                datasets = upstream.get("datasets", {}) or {}
             for key in manifest.values():
                 if not key:
                     continue
                 local_dir = Path(root) / key
-                if local_dir.exists():
+                if local_dir.exists() and not local_dir.is_dir():
+                    local_dir.unlink()
+                if local_dir.is_dir():
                     continue
                 s3_meta = datasets.get(key)
                 if not s3_meta:
