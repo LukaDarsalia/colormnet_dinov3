@@ -23,3 +23,9 @@ training:
   val_video_max_frames: 0
   stage2:
     batch_size: 16
+    iterations: 75000
+    finetune: 5000
+    steps: [60000]
+    lr: 0.00003
+    start_warm: 10000
+    end_warm: 35000
