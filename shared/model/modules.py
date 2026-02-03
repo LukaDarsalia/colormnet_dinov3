@@ -180,6 +180,27 @@ class KeyEncoder_DINOv2_v6(nn.Module):
         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear')
         self.upsample4 = nn.Upsample(scale_factor=4, mode='bilinear')
 
+    def _upsample_chunked(self, x, upsample):
+        x = x.contiguous(memory_format=torch.contiguous_format)
+        scale = upsample.scale_factor
+        if isinstance(scale, tuple):
+            scale_h, scale_w = scale
+        else:
+            scale_h = scale_w = scale
+        out_h = int(x.shape[-2] * scale_h)
+        out_w = int(x.shape[-1] * scale_w)
+        elems_per = x.shape[1] * out_h * out_w
+        max_elems = (1 << 31) - 1
+        if elems_per <= 0:
+            return upsample(x)
+        max_n = max(1, int(max_elems // elems_per))
+        if x.shape[0] <= max_n:
+            return upsample(x)
+        chunks = []
+        for start in range(0, x.shape[0], max_n):
+            chunks.append(upsample(x[start:start + max_n]))
+        return torch.cat(chunks, dim=0)
+
     def forward(self, f):
         x = self.conv1(f) 
         x = self.bn1(x)
@@ -192,8 +213,8 @@ class KeyEncoder_DINOv2_v6(nn.Module):
         f16_dino = self.network2(f) # 1/14, 384  ->   interp to 1/16
 
         g16 = self.fuse1(f16_dino, f16)
-        g8 = self.fuse2(self.upsample2(f16_dino), f8)
-        g4 = self.fuse3(self.upsample4(f16_dino), f4)
+        g8 = self.fuse2(self._upsample_chunked(f16_dino, self.upsample2), f8)
+        g4 = self.fuse3(self._upsample_chunked(f16_dino, self.upsample4), f4)
 
         return g16, g8, g4
 
