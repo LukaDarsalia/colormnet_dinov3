@@ -21,7 +21,7 @@ training:
   val_max_videos: 1
   log_val_video: true
   val_frame_stride: 1
-  val_video_fps: 12
+  val_video_fps: 24
   val_video_max_frames: 120
   save_network_interval: 10
   save_checkpoint_interval: 20

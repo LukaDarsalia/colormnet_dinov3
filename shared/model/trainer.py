@@ -107,7 +107,7 @@ class ColorMNetTrainer:
         with context:
             for vid_reader in val_loader:
                 clip_psnr = []
-                pred_video_frames = [] if should_log_video and not video_logged else None
+                video_frames = [] if should_log_video and not video_logged else None
                 loader = DataLoader(vid_reader, batch_size=1, shuffle=False, num_workers=2)
                 vid_name = vid_reader.vid_name
                 vid_length = len(loader)
@@ -203,15 +203,16 @@ class ColorMNetTrainer:
                             wb_frames.append(self.wandb.Image(out_img, caption="Pred_%s_it%s"%(t0, it)))
                             wb_frames.append(self.wandb.Image(gt_img, caption="GT%s_it%s"%(t0, it)))
 
-                            if pred_video_frames is not None:
-                                if val_video_max_frames <= 0 or len(pred_video_frames) < val_video_max_frames:
-                                    pred_video_frames.append(out_img)
+                            if video_frames is not None:
+                                if val_video_max_frames <= 0 or len(video_frames) < val_video_max_frames:
+                                    pair_frame = np.concatenate([out_img, gt_img], axis=1)
+                                    video_frames.append(pair_frame)
 
                 if self.wandb is not None and self.local_rank == 0:
                     self.wandb.log({"val/pairs": wb_frames},step=it)
-                    if pred_video_frames and not video_logged:
-                        video = self.wandb.Video(np.stack(pred_video_frames, axis=0), fps=val_video_fps, format="mp4")
-                        self.wandb.log({"val/video_pred": video}, step=it)
+                    if video_frames and not video_logged:
+                        video = self.wandb.Video(np.stack(video_frames, axis=0), fps=val_video_fps, format="mp4")
+                        self.wandb.log({"val/video_pairs": video}, step=it)
                         video_logged = True
 
                 print('current item: %s clip_psnr is: %s'%(info['vid_name'][0], np.mean(clip_psnr)))

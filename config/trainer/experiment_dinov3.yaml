@@ -19,7 +19,7 @@ training:
   val_no_grad: true
   log_val_video: true
   val_frame_stride: 1
-  val_video_fps: 12
+  val_video_fps: 24
   val_video_max_frames: 0
   stage2:
     batch_size: 16
