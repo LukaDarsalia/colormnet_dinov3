@@ -103,6 +103,26 @@ class ColorMNetTrainer:
         wb_frames = []
         vid_count = 0
 
+        def _ensure_hwc_uint8(img):
+            arr = np.asarray(img)
+            if arr.ndim == 2:
+                arr = np.stack([arr] * 3, axis=-1)
+            elif arr.ndim == 3:
+                if arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+                    arr = np.transpose(arr, (1, 2, 0))
+                if arr.shape[-1] == 1:
+                    arr = np.repeat(arr, 3, axis=-1)
+                elif arr.shape[-1] > 3:
+                    arr = arr[..., :3]
+            else:
+                raise ValueError(f"Unexpected image shape: {arr.shape}")
+            if arr.dtype != np.uint8:
+                if arr.max() <= 1.0:
+                    arr = (arr * 255).astype(np.uint8)
+                else:
+                    arr = arr.astype(np.uint8)
+            return np.ascontiguousarray(arr)
+
         context = torch.no_grad() if val_no_grad else torch.enable_grad()
         with context:
             for vid_reader in val_loader:
@@ -205,7 +225,9 @@ class ColorMNetTrainer:
 
                             if video_frames is not None:
                                 if val_video_max_frames <= 0 or len(video_frames) < val_video_max_frames:
-                                    pair_frame = np.concatenate([out_img, gt_img], axis=1)
+                                    out_frame = _ensure_hwc_uint8(out_img)
+                                    gt_frame = _ensure_hwc_uint8(gt_img)
+                                    pair_frame = np.concatenate([out_frame, gt_frame], axis=1)
                                     video_frames.append(pair_frame)
 
                 if self.wandb is not None and self.local_rank == 0:
