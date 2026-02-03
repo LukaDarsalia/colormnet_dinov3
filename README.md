@@ -19,7 +19,7 @@ Nanjing University of Science and Technology
   Try out the **online demo** here → [![Hugging Face](https://img.shields.io/badge/Demo-%F0%9F%A4%97%20Hugging%20Face-blue)](https://huggingface.co/spaces/yyang181/ColorMNet).  
   *Note:* Due to the **HF Pro Zero-GPU quota**, this space currently has **only 25 minutes of Zero-GPU runtime per day**. Please consider running the demo locally [app.py](https://github.com/yyang181/colormnet/blob/main/app.py) or on [Colab](https://colab.research.google.com/drive/1naXws0elPMunfcvKSryLW1lFnPOF6Nb-?usp=sharing) if you need more time.
 - [2025-10-05] Add Gradio demo, see [app.py](https://github.com/yyang181/colormnet/blob/main/app.py)
-- [2024-11-14] Add matrics evaluation code, see [evaluation.py](https://github.com/yyang181/colormnet/blob/main/evaluation_matrics/evaluation.py). Demo command ```pip install lpips && python evaluation_matrics/evaluation.py```.
+- [2024-11-14] Add matrics evaluation code, see [evaluation.py](https://github.com/yyang181/colormnet/blob/main/shared/evaluation_matrics/evaluation.py). Demo command ```pip install lpips && python shared/evaluation_matrics/evaluation.py```.
 - [2024-09-09] Add training code, see [train.py](https://github.com/yyang181/colormnet/blob/main/train.py).
 - [2024-09-09] Colab demo for ColorMNet is available at [![google colab logo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1naXws0elPMunfcvKSryLW1lFnPOF6Nb-?usp=sharing).
 - [2024-09-07] Add inference code and pretrained weights, see [test.py](https://github.com/yyang181/colormnet/blob/main/test.py).
@@ -80,6 +80,53 @@ CUDA_VISIBLE_DEVICES=0 python test.py
 CUDA_VISIBLE_DEVICES=0 python app.py
 ``` 
 
+## Pipeline (W&B Artifacts)
+This repo now supports a lightweight pipeline wrapper under `src/` that keeps the core model logic intact while adding:
+- YAML configs (`config/`)
+- Stage runners (`src/loader`, `src/augmenter`, `src/splitter`, `src/trainer`, `src/evaluator`)
+- W&B artifact lineage between stages
+- Shared core code under `shared/` (model, dataset, inference, util, evaluation)
+
+### Stages
+1) **Loader**: registers datasets as a W&B artifact (train/val + eval input/ref).
+2) **Augmenter (optional)**: pass-through artifact (augmentation stays online in the dataset loader).
+3) **Splitter**: creates train/val split lists (no data copying).
+4) **Trainer**: trains with the split lists and logs samples/metrics.
+5) **Evaluator**: runs inference + paper metrics on the eval set and logs results.
+
+### Example commands
+```bash
+python -m src.loader.runner --config config/loader/base.yaml
+# Optional (pass-through)
+python -m src.augmenter.runner --config config/augmenter/base.yaml
+python -m src.splitter.runner --config config/splitter/base.yaml
+python -m src.trainer.runner --config config/trainer/base.yaml
+python -m src.evaluator.runner --config config/evaluator/base.yaml
+```
+
+### Notes
+- Edit `config/loader/base.yaml` to point at your train/val/eval roots.
+- The evaluator expects paired eval input/ref folders (same video folder names).
+- LPIPS/FID/CDC require extra deps or downloads (see `shared/evaluation_matrics`).
+- S3 uploads are required for all pipeline stages; configure `s3` in each config (bucket/prefix/region).
+
+### DINO Backbone (v2/v3)
+You can switch the DINO backbone used by the key encoder via the `dino` block in configs.
+Example (v3 via HF, gated model):
+```
+dino:
+  backbone: dinov3_vits16
+  source: hf
+  hf_model: facebook/dinov3-vits16-pretrain-lvd1689m
+  align: interpolate   # or learned
+  target_stride: 16
+  layer_indices: [8, 9, 10, 11]
+  num_prefix_tokens: 5
+  freeze: true
+```
+For gated HF models, authenticate with `huggingface-cli login` or set `HF_TOKEN` in your environment.
+If you use `source: hf`, install `transformers` (and its deps).
+
 ## Train
 ### Dataset structure for both the training set and the validation set
 ```
@@ -136,4 +183,3 @@ This project is based on [XMem](https://github.com/hkchengrex/XMem). Some codes 
 ### Contact
 
 This repo is currently maintained by Yixin Yang ([@yyang181](https://github.com/yyang181)) and is for academic research use only. 
-

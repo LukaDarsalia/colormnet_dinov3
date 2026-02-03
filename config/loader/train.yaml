@@ -1,0 +1,20 @@
+_base_: base.yaml
+
+wandb:
+  run_name: loader-train
+  job_type: loader-train
+
+data:
+  train_root: ./data/train/DAVIS_videvo_resized300
+  val_root: null
+  eval_input_root: null
+  eval_ref_root: null
+
+artifact:
+  name: colormnet-train
+  type: dataset
+  description: ColorMNet training dataset (DAVIS + Videvo)
+
+s3:
+  pack_datasets: true
+  pack_compression: gz

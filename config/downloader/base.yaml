@@ -1,0 +1,24 @@
+output:
+  root: ./data
+  cache_dir: ./data/_downloads
+  # These map to loader's expected paths.
+  train_root: train
+  val_root: val
+  eval_input_root: eval_input
+  eval_ref_root: eval_ref
+  manifest: ./data/manifest.json
+
+# Define one or more downloadable sources.
+# Each source is an archive that is extracted into the target directory.
+sources:
+  - name: train_dataset
+    url: https://example.com/path/to/train.zip
+    target_key: train
+    extract: true
+    strip_components: 0
+    # sha256: optional
+  - name: val_dataset
+    url: https://example.com/path/to/val.zip
+    target_key: val
+    extract: true
+    strip_components: 0

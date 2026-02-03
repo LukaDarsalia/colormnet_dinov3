@@ -1,0 +1,20 @@
+_base_: base.yaml
+
+wandb:
+  run_name: loader-videvo-val
+  job_type: loader-videvo-val
+
+data:
+  train_root: ./data/eval_ref/videvo20_mod32
+  val_root: null
+  eval_input_root: ./data/eval_ref/videvo20_mod32
+  eval_ref_root: ./data/eval_ref/videvo20_mod32
+
+artifact:
+  name: colormnet-videvo-val
+  type: dataset
+  description: Videvo validation set for ColorMNet evaluation
+
+s3:
+  pack_datasets: true
+  pack_compression: gz

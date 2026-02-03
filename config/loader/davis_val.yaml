@@ -1,0 +1,20 @@
+_base_: base.yaml
+
+wandb:
+  run_name: loader-davis-val
+  job_type: loader-davis-val
+
+data:
+  train_root: ./data/eval_input/DAVIS30_GT_mod32_new
+  val_root: null
+  eval_input_root: ./data/eval_input/DAVIS30_GT_mod32_new
+  eval_ref_root: ./data/eval_input/DAVIS30_GT_mod32_new
+
+artifact:
+  name: colormnet-davis-val
+  type: dataset
+  description: DAVIS validation set for ColorMNet evaluation
+
+s3:
+  pack_datasets: true
+  pack_compression: gz

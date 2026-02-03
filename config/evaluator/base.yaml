@@ -1,0 +1,70 @@
+wandb:
+  project: ColorMNet
+  entity: null
+  run_name: evaluator
+  job_type: evaluator
+  dir: ./wandb_save_dir
+
+input_artifact: colormnet-dataset:latest
+
+model:
+  path: saves/DINOv2FeatureV6_LocalAtten_s2_154000.pth
+  artifact: null
+  file_name: null
+
+dino:
+  backbone: dinov2_s
+  source: torch_hub
+  align: interpolate
+  target_stride: 16
+  layer_indices: [8, 9, 10, 11]
+  freeze: true
+
+inference:
+  disable_long_term: false
+  max_mid_term_frames: 10
+  min_mid_term_frames: 5
+  max_long_term_elements: 10000
+  num_prototypes: 128
+  top_k: 30
+  mem_every: 5
+  deep_update_every: -1
+  benchmark: false
+  flip: false
+  size: -1
+  reverse: false
+  FirstFrameIsNotExemplar: false
+
+metrics:
+  psnr: true
+  ssim: true
+  lpips: false
+  colorfulness: false
+  fid: false
+  cdc: false
+
+logging:
+  sample_videos: 1
+  sample_frames: 3
+
+output:
+  dir: ./outputs/eval
+  create_videos: false
+  video_fps: 24
+
+output_artifact:
+  enabled: false
+  name: colormnet-eval-output
+  type: predictions
+  description: Evaluation outputs
+
+s3:
+  enabled: true
+  bucket: your-bucket
+  prefix: colormnet
+  region: null
+  endpoint_url: null
+  profile: null
+  storage_class: null
+  progress: true
+  progress_min_bytes: 1048576

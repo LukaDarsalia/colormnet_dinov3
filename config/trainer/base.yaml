@@ -1,0 +1,58 @@
+wandb:
+  project: ColorMNet
+  entity: null
+  run_name: null
+  job_type: training
+  dir: ./wandb_save_dir
+
+input_artifact: colormnet-split:latest
+
+dino:
+  backbone: dinov2_s
+  source: torch_hub
+  align: interpolate
+  target_stride: 16
+  layer_indices: [8, 9, 10, 11]
+  freeze: true
+
+training:
+  exp_id: colormnet
+  stages: "2"
+  savepath: ./wandb_save_dir
+  benchmark: false
+  no_amp: false
+  num_workers: 16
+  key_dim: 64
+  value_dim: 512
+  hidden_dim: 64
+  deep_update_prob: 0.2
+  gamma: 0.1
+  weight_decay: 0.05
+  log_text_interval: 100
+  log_image_interval: 100
+  save_network_interval: 2500
+  save_checkpoint_interval: 5000
+  load_network: null
+  load_checkpoint: null
+  debug: false
+  stage2:
+    batch_size: 2
+    iterations: 150000
+    finetune: 10000
+    steps: [120000]
+    lr: 0.00002
+    num_ref_frames: 3
+    num_frames: 8
+    start_warm: 20000
+    end_warm: 70000
+
+s3:
+  enabled: true
+  bucket: your-bucket
+  prefix: colormnet
+  region: null
+  endpoint_url: null
+  profile: null
+  storage_class: null
+  progress: true
+  progress_min_bytes: 1048576

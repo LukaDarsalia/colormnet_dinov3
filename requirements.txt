@@ -7,5 +7,11 @@ numpy
 scikit-image
 einops
 torch
+torchvision
 opencv-python-headless
 wandb 
+pyyaml
+boto3
+transformers
+python-dotenv
+tqdm

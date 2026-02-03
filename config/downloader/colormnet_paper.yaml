@@ -1,0 +1,31 @@
+output:
+  root: ./data
+  cache_dir: ./data/_downloads
+  # These map to loader's expected paths.
+  train_root: train
+  val_root: val
+  eval_input_root: eval_input
+  eval_ref_root: eval_ref
+  manifest: ./data/manifest.json
+
+# Sources are based on commonly used DAVIS/Videvo splits used in video colorization papers.
+# You can replace any URL with your preferred source or official mirrors.
+sources:
+  - name: davis_videvo_train
+    url: https://drive.google.com/uc?id=1tgV7Q3PfAA8cZZbRSAOQmKmrITezK9xA
+    filename: davis_videvo_train.zip
+    target_key: train
+    extract: true
+    strip_components: 0
+  - name: davis_test
+    url: https://drive.google.com/uc?id=1EgKG4fwt0Kn9wUhpEgxzqjZXusEOy7mI
+    filename: davis_test.zip
+    target_key: eval_input
+    extract: true
+    strip_components: 0
+  - name: videvo_test
+    url: https://drive.google.com/uc?id=1_TUYVaEJcBivnvFQXdE7SViWl31s1aUR
+    filename: videvo_test.zip
+    target_key: eval_ref
+    extract: true
+    strip_components: 0

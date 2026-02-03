@@ -1,0 +1,33 @@
+wandb:
+  project: ColorMNet
+  entity: null
+  run_name: loader
+  job_type: loader
+  dir: ./wandb_save_dir
+
+data:
+  train_root: /path/to/train
+  val_root: /path/to/val
+  eval_input_root: input
+  eval_ref_root: ref
+
+artifact:
+  name: colormnet-dataset
+  type: dataset
+  description: ColorMNet dataset artifact
+  store_data: false
+
+logging:
+  sample_videos: 1
+  sample_frames: 3
+
+s3:
+  enabled: true
+  bucket: personal-data-science-data
+  prefix: colormnet
+  region: null
+  endpoint_url: null
+  profile: null
+  storage_class: null
+  progress: true
+  progress_min_bytes: 1048576

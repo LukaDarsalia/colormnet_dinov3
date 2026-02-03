@@ -1,0 +1,30 @@
+wandb:
+  project: ColorMNet
+  entity: null
+  run_name: splitter
+  job_type: splitter
+  dir: ./wandb_save_dir
+
+input_artifact: colormnet-dataset:latest
+
+split:
+  mode: auto
+  val_fraction: 0.1
+  seed: 1337
+  shuffle: true
+
+output_artifact:
+  name: colormnet-split
+  type: split
+  description: Train/val split lists for ColorMNet
+
+s3:
+  enabled: true
+  bucket: your-bucket
+  prefix: colormnet
+  region: null
+  endpoint_url: null
+  profile: null
+  storage_class: null
+  progress: true
+  progress_min_bytes: 1048576

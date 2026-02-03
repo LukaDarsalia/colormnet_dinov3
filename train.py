@@ -9,19 +9,19 @@ import torch
 from torch.utils.data import DataLoader, ConcatDataset
 import torch.distributed as distributed
 
-from model.trainer import ColorMNetTrainer
-from dataset.vos_dataset import DAVISVidevoDataset
+from shared.model.trainer import ColorMNetTrainer
+from shared.dataset.vos_dataset import DAVISVidevoDataset
 
-from util.logger import TensorboardLogger
-from util.configuration import Configuration
+from shared.util.logger import TensorboardLogger
+from shared.util.configuration import Configuration
 
 import wandb
 import socket
 
-from inference.data.test_datasets import DAVISTestDataset_221128_TransColorization_batch
-from inference.data.mask_mapper import MaskMapper
-from model.network import ColorMNet
-from inference.inference_core import InferenceCore
+from shared.inference.data.test_datasets import DAVISTestDataset_221128_TransColorization_batch
+from shared.inference.data.mask_mapper import MaskMapper
+from shared.model.network import ColorMNet
+from shared.inference.inference_core import InferenceCore
 
 """
 Initial setup
@@ -247,7 +247,7 @@ for si, stage in enumerate(stages_to_perform):
             model.save_network(total_iter)
             model.save_checkpoint(total_iter)
 
-    network_in_memory = model.XMem.module.state_dict()
+    network_in_memory = model.model.module.state_dict()
 
     wandb.finish()
 
