@@ -21,6 +21,10 @@ training:
   val_frame_stride: 1
   val_video_fps: 24
   val_video_max_frames: 0
+  log_text_interval: 12
+  log_image_interval: 12
+  save_network_interval: 312
+  save_checkpoint_interval: 625
   stage2:
     batch_size: 16
     iterations: 18750
