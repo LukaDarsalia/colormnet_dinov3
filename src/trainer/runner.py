@@ -20,6 +20,10 @@ import numpy as np
 import torch
 import torch.distributed as distributed
 from torch.utils.data import DataLoader, ConcatDataset
+try:
+    from tqdm import tqdm  # type: ignore
+except ImportError:  # pragma: no cover
+    tqdm = None
 
 import wandb
 
@@ -60,6 +64,11 @@ def _build_base_config(cfg: dict, data_paths: dict) -> dict:
         "save_checkpoint_interval": int(training.get("save_checkpoint_interval", 5000)),
         "exp_id": training.get("exp_id") or "NULL",
         "debug": bool(training.get("debug", False)),
+        "progress_bar": bool(training.get("progress_bar", False)),
+        "val_frame_stride": int(training.get("val_frame_stride", 10)),
+        "log_val_video": bool(training.get("log_val_video", False)),
+        "val_video_fps": int(training.get("val_video_fps", 12)),
+        "val_video_max_frames": int(training.get("val_video_max_frames", 0)),
     }
     base["dino"] = cfg.get("dino", {})
     base["amp"] = not base["no_amp"]
@@ -277,6 +286,7 @@ def main() -> None:
 
         train_sampler, train_loader = renew_DAVIS_Videvo_batch_loader(5)
         renew_loader = renew_DAVIS_Videvo_batch_loader
+        cur_skip = 5
 
         val_dataset = DAVISTestDataset_221128_TransColorization_batch(
             val_root,
@@ -290,6 +300,11 @@ def main() -> None:
         if stage != "0":
             change_skip_iter = [round(config["iterations"] * f) for f in increase_skip_fraction]
             print(f"The skip value will change approximately at the following iterations: {change_skip_iter[:-1]}")
+
+        pbar = None
+        if config.get("progress_bar") and local_rank == 0 and tqdm is not None:
+            total_steps = config["iterations"] + config["finetune"]
+            pbar = tqdm(total=total_steps, initial=total_iter, desc=f"stage {stage}", dynamic_ncols=True)
 
         finetuning = False
         np.random.seed(np.random.randint(2**30 - 1) + local_rank * 100)
@@ -318,10 +333,14 @@ def main() -> None:
 
                     model.do_pass(data, total_iter, val_dataset=val_dataset)
                     total_iter += 1
+                    if pbar is not None:
+                        pbar.update(1)
 
                     if total_iter >= config["iterations"] + config["finetune"]:
                         break
         finally:
+            if pbar is not None:
+                pbar.close()
             if not config["debug"] and model.logger is not None and total_iter > 5000:
                 model.save_network(total_iter)
                 model.save_checkpoint(total_iter)

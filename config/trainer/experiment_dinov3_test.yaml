@@ -1,0 +1,30 @@
+_base_: base.yaml
+
+wandb:
+  run_name: colormnet_dinov3_test
+  tags: [test]
+
+dino:
+  backbone: dinov3_vits16
+  source: hf
+  hf_model: facebook/dinov3-vits16-pretrain-lvd1689m
+  align: interpolate
+  target_stride: 16
+  layer_indices: [8, 9, 10, 11]
+  freeze: true
+  num_prefix_tokens: 5
+
+training:
+  exp_id: colormnet_dinov3_test
+  progress_bar: true
+  log_val_video: true
+  val_frame_stride: 1
+  val_video_fps: 12
+  val_video_max_frames: 120
+  save_network_interval: 10
+  save_checkpoint_interval: 20
+  stage2:
+    batch_size: 2
+    iterations: 20
+    finetune: 5
+    steps: [10]

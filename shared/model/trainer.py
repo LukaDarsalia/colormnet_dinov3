@@ -86,12 +86,23 @@ class ColorMNetTrainer:
         config['deep_update_every'] = -1
         config['hidden_dim'] = 64
 
+        val_stride = int(self.config.get('val_frame_stride', 10))
+        if val_stride < 1:
+            val_stride = 1
+
+        log_val_video = bool(self.config.get('log_val_video', False))
+        val_video_fps = int(self.config.get('val_video_fps', 12))
+        val_video_max_frames = int(self.config.get('val_video_max_frames', 0))
+        should_log_video = log_val_video and self.wandb is not None and self.local_rank == 0
+        video_logged = False
+
         avg_psnr = []
         wb_frames = []
 
         # with torch.no_grad():
         for vid_reader in val_loader:
             clip_psnr = []
+            pred_video_frames = [] if should_log_video and not video_logged else None
             loader = DataLoader(vid_reader, batch_size=1, shuffle=False, num_workers=2)
             vid_name = vid_reader.vid_name
             vid_length = len(loader)
@@ -111,7 +122,7 @@ class ColorMNetTrainer:
             t0 = 0
             for ti, data in enumerate(loader):
                 t0 += 1 
-                if (t0-1) % 10 != 0: # Do not validate every frame for speed up training
+                if (t0-1) % val_stride != 0: # Do not validate every frame for speed up training
                     continue
 
                 with torch.cuda.amp.autocast(enabled=not config['benchmark']):
@@ -186,7 +197,17 @@ class ColorMNetTrainer:
 
                         wb_frames.append(self.wandb.Image(out_img, caption="Pred_%s_it%s"%(t0, it)))
                         wb_frames.append(self.wandb.Image(gt_img, caption="GT%s_it%s"%(t0, it)))
-            self.wandb.log({"val/pairs": wb_frames},step=it)
+
+                        if pred_video_frames is not None:
+                            if val_video_max_frames <= 0 or len(pred_video_frames) < val_video_max_frames:
+                                pred_video_frames.append(out_img)
+
+            if self.wandb is not None and self.local_rank == 0:
+                self.wandb.log({"val/pairs": wb_frames},step=it)
+                if pred_video_frames and not video_logged:
+                    video = self.wandb.Video(np.stack(pred_video_frames, axis=0), fps=val_video_fps, format="mp4")
+                    self.wandb.log({"val/video_pred": video}, step=it)
+                    video_logged = True
 
 
             print('current item: %s clip_psnr is: %s'%(info['vid_name'][0], np.mean(clip_psnr)))

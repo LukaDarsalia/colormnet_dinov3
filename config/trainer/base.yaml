@@ -35,6 +35,11 @@ training:
   load_network: null
   load_checkpoint: null
   debug: false
+  progress_bar: false
+  val_frame_stride: 10
+  log_val_video: false
+  val_video_fps: 12
+  val_video_max_frames: 0
   stage2:
     batch_size: 2
     iterations: 150000
