@@ -341,7 +341,7 @@ def main() -> None:
         if sample_videos > 0 and video_paths:
             run.log({
                 "samples/video": [
-                    wandb.Video(path, fps=video_fps, format="mp4")
+                    wandb.Video(path, format="mp4")
                     for path in video_paths[:sample_videos]
                 ]
             })
