@@ -341,7 +341,17 @@ def calculate_fid_yyx(pred_dir, gt_dir, bs=None):
     inception_model_fid.cuda()
     inception_model_fid.eval()
 
-    clips = sorted(os.listdir(pred_dir))
+    clips = []
+    for clip in sorted(os.listdir(pred_dir)):
+        pred_clip = os.path.join(pred_dir, clip)
+        gt_clip = os.path.join(gt_dir, clip)
+        if not os.path.isdir(pred_clip):
+            continue
+        if not os.path.isdir(gt_clip):
+            continue
+        clips.append(clip)
+    if not clips:
+        raise FileNotFoundError(f"No matching clip folders between {pred_dir} and {gt_dir}")
     avg_fid_score = 0
     for clip in clips:
         pred_dir_clip = os.path.join(pred_dir, clip) 

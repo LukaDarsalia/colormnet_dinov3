@@ -8,17 +8,19 @@ wandb:
 input_artifact: colormnet-dataset:latest
 
 model:
-  path: saves/DINOv2FeatureV6_LocalAtten_s2_154000.pth
+  path: wandb_save_dir/saves/colormnet_dinov3_s2/colormnet_dinov3_s2_40000.pth
   artifact: null
   file_name: null
 
 dino:
-  backbone: dinov2_s
-  source: torch_hub
-  align: interpolate
+  backbone: dinov3_vitl16
+  source: hf
+  hf_model: facebook/dinov3-vitl16-pretrain-lvd1689m
+  align: learned
   target_stride: 16
   layer_indices: [8, 9, 10, 11]
   freeze: true
+  num_prefix_tokens: 5
 
 inference:
   disable_long_term: false
