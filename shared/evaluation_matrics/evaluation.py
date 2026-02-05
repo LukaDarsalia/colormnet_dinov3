@@ -48,12 +48,25 @@ def calculate_psnr(img1, img2):
     return result
 
 def calculate_psnr_for_folder(gt_folder, result_folder, loss_fn_alex, flag_CalPSNR, flag_CalSSIM, flag_CalLPIPS, flag_CalColorfulness):
-    result_clips = sorted([clip for clip in os.listdir(result_folder) if os.path.isdir(os.path.join(result_folder, clip))])
+    result_clips = []
+    for clip in sorted(os.listdir(result_folder)):
+        if clip.startswith('.'):
+            continue
+        pred_dir = os.path.join(result_folder, clip)
+        gt_dir = os.path.join(gt_folder, clip)
+        if not os.path.isdir(pred_dir):
+            continue
+        if not os.path.isdir(gt_dir):
+            continue
+        result_clips.append(clip)
+    if not result_clips:
+        raise FileNotFoundError(f"No matching clip folders between {result_folder} and {gt_folder}")
 
     psnr_values = []
     ssim_values = []
     colorfulness = []
     lpips = []
+    missing_gt = 0
     for clip in result_clips:
         path_clip = os.path.join(result_folder, clip)
         test_files = sorted([img for img in os.listdir(path_clip) if img.endswith('.png') or img.endswith('.jpg')])
@@ -61,6 +74,9 @@ def calculate_psnr_for_folder(gt_folder, result_folder, loss_fn_alex, flag_CalPS
         for img in test_files:
             gt_path = os.path.join(gt_folder, clip, img)
             result_path = os.path.join(path_clip, img)
+            if not os.path.exists(gt_path):
+                missing_gt += 1
+                continue
             
             gt_img = np.array(Image.open(gt_path).convert('RGB'))
             result_img = np.array(Image.open(result_path).convert('RGB'))
@@ -98,6 +114,8 @@ def calculate_psnr_for_folder(gt_folder, result_folder, loss_fn_alex, flag_CalPS
     avg_ssim = np.mean(ssim_values)
     avg_colorfulness = np.mean(colorfulness)
     avg_lpips = np.mean(lpips)
+    if missing_gt > 0:
+        print(f"Warning: skipped {missing_gt} frames with missing GT; check output/gt alignment.")
     return avg_psnr, avg_ssim, avg_colorfulness, avg_lpips
 
 if __name__ == "__main__":
