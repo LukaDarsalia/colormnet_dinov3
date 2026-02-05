@@ -195,6 +195,27 @@ def main() -> None:
             base_config = _build_base_config(cfg, {"train_root": train_root, "val_root": val_root})
             if base_config["benchmark"]:
                 torch.backends.cudnn.benchmark = True
+
+            load_network_artifact = training_cfg.get("load_network_artifact")
+            if load_network_artifact:
+                model_art = wb_run.use_artifact(load_network_artifact)
+                model_root = model_art.download()
+                load_network_file = training_cfg.get("load_network_file")
+                if load_network_file:
+                    candidate = Path(model_root) / load_network_file
+                    if not candidate.exists():
+                        matches = list(Path(model_root).rglob(load_network_file))
+                        if not matches:
+                            raise FileNotFoundError(
+                                f"Model file '{load_network_file}' not found in artifact {load_network_artifact}"
+                            )
+                        candidate = matches[0]
+                    base_config["load_network"] = str(candidate)
+                else:
+                    candidates = sorted(Path(model_root).rglob("*.pth"))
+                    if not candidates:
+                        raise FileNotFoundError(f"No .pth files found in artifact {load_network_artifact}")
+                    base_config["load_network"] = str(candidates[0])
         else:
             wb_run.use_artifact(input_artifact)
             if dataset_artifact_ref:

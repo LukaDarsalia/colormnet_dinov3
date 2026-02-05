@@ -7,7 +7,8 @@ wandb:
 training:
   exp_id: colormnet_dinov3_finetune
   finetune_only: true
-  load_network: ./wandb_save_dir/saves/colormnet_dinov3_s2/colormnet_dinov3_s2_40000.pth
+  load_network_artifact: colormnet_dinov3_s2-model:v0
+  load_network_file: colormnet_dinov3_s2_best.pth
   stage2:
     iterations: 0
     finetune: 2000
