@@ -65,6 +65,7 @@ def _build_base_config(cfg: dict, data_paths: dict) -> dict:
         "exp_id": training.get("exp_id") or "NULL",
         "debug": bool(training.get("debug", False)),
         "progress_bar": bool(training.get("progress_bar", False)),
+        "finetune_only": bool(training.get("finetune_only", False)),
         "val_frame_stride": int(training.get("val_frame_stride", 10)),
         "val_no_grad": bool(training.get("val_no_grad", False)),
         "val_max_videos": int(training.get("val_max_videos", 0)),
@@ -299,7 +300,9 @@ def main() -> None:
         total_epoch = math.ceil(config["iterations"] / len(train_loader))
         current_epoch = total_iter // len(train_loader)
         print(f"We approximately use {total_epoch} epochs.")
-        if stage != "0":
+        finetune_only = bool(config.get("finetune_only", False))
+
+        if stage != "0" and not finetune_only:
             change_skip_iter = [round(config["iterations"] * f) for f in increase_skip_fraction]
             print(f"The skip value will change approximately at the following iterations: {change_skip_iter[:-1]}")
 
@@ -309,6 +312,9 @@ def main() -> None:
             pbar = tqdm(total=total_steps, initial=total_iter, desc=f"stage {stage}", dynamic_ncols=True)
 
         finetuning = False
+        if finetune_only:
+            train_sampler, train_loader = renew_loader(cur_skip, finetune=True)
+            finetuning = True
         np.random.seed(np.random.randint(2**30 - 1) + local_rank * 100)
         try:
             while total_iter < config["iterations"] + config["finetune"]:
@@ -318,7 +324,7 @@ def main() -> None:
 
                 model.train()
                 for data in train_loader:
-                    if stage != "0" and total_iter >= change_skip_iter[0]:
+                    if stage != "0" and (not finetune_only) and total_iter >= change_skip_iter[0]:
                         while total_iter >= change_skip_iter[0]:
                             cur_skip = max_skip_values[0]
                             max_skip_values = max_skip_values[1:]

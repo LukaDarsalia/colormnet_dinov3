@@ -11,6 +11,7 @@ dino:
   target_stride: 16
   layer_indices: [8, 9, 10, 11]
   freeze: true
+  freeze_backbone_only: true
   num_prefix_tokens: 5
 
 training:

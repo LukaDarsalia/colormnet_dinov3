@@ -300,6 +300,8 @@ class Segmentor(nn.Module):
         self.target_stride = int(dino_cfg.get('target_stride', 16))
         self.align_method = dino_cfg.get('align', 'interpolate')
         self.freeze = bool(dino_cfg.get('freeze', True))
+        # If true, freeze only the DINO backbone while keeping the projection/align head trainable.
+        self.freeze_backbone_only = bool(dino_cfg.get('freeze_backbone_only', False))
 
         if dino_cfg.get('source') == 'stub':
             self.embed_dim = int(dino_cfg.get('embedding_size', 384))
@@ -339,6 +341,9 @@ class Segmentor(nn.Module):
                 raise ValueError(f"Unsupported dino source '{self.backbone_source}'.")
 
         self.backbone.eval()
+        if self.freeze:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
 
         self.dino_feat_dim = self.embed_dim * self.num_layers
         self.conv3 = nn.Conv2d(self.dino_feat_dim, self.dino_feat_dim, kernel_size=1, bias=False)
@@ -382,17 +387,35 @@ class Segmentor(nn.Module):
         raise ValueError(f"Unsupported align method '{self.align_method}'.")
                 
     def forward(self, x):
-        context = torch.no_grad() if self.freeze else torch.enable_grad()
-        with context:
+        if self.freeze and not self.freeze_backbone_only:
+            context = torch.no_grad()
+            with context:
+                tokens = self._get_intermediate_layers(x)
+                f16 = torch.cat(tokens, dim=1)
+
+                f16 = self.conv3(f16)
+                f16 = self.bn3(f16)
+                f16 = self.relu(f16)
+
+                target_size = (x.shape[-2] // self.target_stride, x.shape[-1] // self.target_stride)
+                f16 = self._align(f16, target_size)
+            return f16
+
+        if self.freeze:
+            with torch.no_grad():
+                tokens = self._get_intermediate_layers(x)
+            tokens = [t.detach() for t in tokens]
+        else:
             tokens = self._get_intermediate_layers(x)
-            f16 = torch.cat(tokens, dim=1)
 
-            f16 = self.conv3(f16)
-            f16 = self.bn3(f16)
-            f16 = self.relu(f16)
+        f16 = torch.cat(tokens, dim=1)
 
-            target_size = (x.shape[-2] // self.target_stride, x.shape[-1] // self.target_stride)
-            f16 = self._align(f16, target_size)
+        f16 = self.conv3(f16)
+        f16 = self.bn3(f16)
+        f16 = self.relu(f16)
+
+        target_size = (x.shape[-2] // self.target_stride, x.shape[-1] // self.target_stride)
+        f16 = self._align(f16, target_size)
 
         return f16
 

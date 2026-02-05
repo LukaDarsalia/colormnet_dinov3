@@ -1,0 +1,14 @@
+_base_: experiment_dinov3.yaml
+
+wandb:
+  run_name: colormnet_dinov3_finetune
+  job_type: training-finetune
+
+training:
+  exp_id: colormnet_dinov3_finetune
+  finetune_only: true
+  load_network: ./wandb_save_dir/saves/colormnet_dinov3_s2/colormnet_dinov3_s2_40000.pth
+  stage2:
+    iterations: 0
+    finetune: 2000
+    lr: 0.00001
