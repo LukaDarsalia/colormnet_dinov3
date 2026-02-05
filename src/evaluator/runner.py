@@ -69,6 +69,10 @@ def _list_video_dirs(root: str) -> List[str]:
     ]
 
 
+def _identity_collate(batch):
+    return batch
+
+
 def _write_videos_from_frames(frames_root: str, videos_root: str, fps: int = 24, max_videos: int | None = None) -> list[str]:
     os.makedirs(videos_root, exist_ok=True)
     outputs = []
@@ -141,6 +145,9 @@ def main() -> None:
     size = int(inference_cfg.get("size", -1))
     reverse = bool(inference_cfg.get("reverse", False))
     first_frame_not_exemplar = bool(inference_cfg.get("FirstFrameIsNotExemplar", False))
+    batch_size = int(inference_cfg.get("batch_size", 1))
+    if batch_size < 1:
+        batch_size = 1
     exemplar_path = inference_cfg.get("exemplar_path")
     if exemplar_path:
         exemplar_path = str(Path(exemplar_path).expanduser())
@@ -188,9 +195,15 @@ def main() -> None:
     total_videos = len(meta_dataset)
 
     for vid_idx, vid_reader in enumerate(meta_loader, start=1):
-        loader = DataLoader(vid_reader, batch_size=1, shuffle=False, num_workers=2)
+        loader = DataLoader(
+            vid_reader,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=2,
+            collate_fn=_identity_collate,
+        )
         vid_name = vid_reader.vid_name
-        vid_length = len(loader)
+        vid_length = len(vid_reader)
         print(f"[eval] Video {vid_idx}/{total_videos}: {vid_name} ({vid_length} frames)", flush=True)
         config["enable_long_term_count_usage"] = (
             config["enable_long_term"] and
@@ -200,58 +213,64 @@ def main() -> None:
 
         processor = InferenceCore(network, config=config)
         first_mask_loaded = False
+        frame_idx = 0
+        for batch in loader:
+            for data in batch:
+                end_frame = frame_idx == (vid_length - 1)
+                with torch.cuda.amp.autocast(enabled=not config["benchmark"]):
+                    rgb = data["rgb"].cuda()
+                    msk = data.get("mask")
+                    if not config["FirstFrameIsNotExemplar"]:
+                        msk = msk[1:3, :, :] if msk is not None else None
 
-        for ti, data in enumerate(loader):
-            with torch.cuda.amp.autocast(enabled=not config["benchmark"]):
-                rgb = data["rgb"].cuda()[0]
-                msk = data.get("mask")
-                if not config["FirstFrameIsNotExemplar"]:
-                    msk = msk[:, 1:3, :, :] if msk is not None else None
+                    info = data["info"]
+                    frame = info["frame"]
+                    shape = info["shape"]
+                    need_resize = info["need_resize"]
 
-                info = data["info"]
-                frame = info["frame"][0]
-                shape = info["shape"]
-                need_resize = info["need_resize"][0]
+                    if not first_mask_loaded:
+                        if msk is not None:
+                            first_mask_loaded = True
+                        else:
+                            frame_idx += 1
+                            if (frame_idx % 10 == 0) or end_frame:
+                                print(f"[eval] {vid_name}: {frame_idx}/{vid_length} frames", flush=True)
+                            continue
 
-                if not first_mask_loaded:
+                    if config["flip"]:
+                        rgb = torch.flip(rgb, dims=[-1])
+                        msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+
                     if msk is not None:
-                        first_mask_loaded = True
+                        msk = torch.Tensor(msk).cuda()
+                        if need_resize:
+                            msk = vid_reader.resize_mask(msk.unsqueeze(0))[0]
+                        processor.set_all_labels(list(range(1, 3)))
+                        labels = range(1, 3)
                     else:
-                        continue
+                        labels = None
 
-                if config["flip"]:
-                    rgb = torch.flip(rgb, dims=[-1])
-                    msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+                    if config["FirstFrameIsNotExemplar"]:
+                        prob = processor.step_AnyExemplar(
+                            rgb,
+                            msk[:1, :, :].repeat(3, 1, 1) if msk is not None else None,
+                            msk[1:3, :, :] if msk is not None else None,
+                            labels,
+                            end=end_frame,
+                        )
+                    else:
+                        prob = processor.step(rgb, msk, labels, end=end_frame)
 
-                if msk is not None:
-                    msk = torch.Tensor(msk[0]).cuda()
                     if need_resize:
-                        msk = vid_reader.resize_mask(msk.unsqueeze(0))[0]
-                    processor.set_all_labels(list(range(1, 3)))
-                    labels = range(1, 3)
-                else:
-                    labels = None
+                        prob = F.interpolate(prob.unsqueeze(1), shape, mode="bilinear", align_corners=False)[:, 0]
 
-                if config["FirstFrameIsNotExemplar"]:
-                    prob = processor.step_AnyExemplar(
-                        rgb,
-                        msk[:1, :, :].repeat(3, 1, 1) if msk is not None else None,
-                        msk[1:3, :, :] if msk is not None else None,
-                        labels,
-                        end=(ti == vid_length - 1),
-                    )
-                else:
-                    prob = processor.step(rgb, msk, labels, end=(ti == vid_length - 1))
+                    if config["flip"]:
+                        prob = torch.flip(prob, dims=[-1])
 
-                if need_resize:
-                    prob = F.interpolate(prob.unsqueeze(1), shape, mode="bilinear", align_corners=False)[:, 0]
-
-                if config["flip"]:
-                    prob = torch.flip(prob, dims=[-1])
-
-                _save_output_frame(output_root, vid_name, frame, rgb, prob)
-            if (ti + 1) % 10 == 0 or (ti + 1) == vid_length:
-                print(f"[eval] {vid_name}: {ti + 1}/{vid_length} frames", flush=True)
+                    _save_output_frame(output_root, vid_name, frame, rgb, prob)
+                frame_idx += 1
+                if (frame_idx % 10 == 0) or end_frame:
+                    print(f"[eval] {vid_name}: {frame_idx}/{vid_length} frames", flush=True)
 
     metrics_cfg = cfg.get("metrics", {})
     metrics = {}
