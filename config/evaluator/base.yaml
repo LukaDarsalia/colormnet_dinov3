@@ -36,7 +36,8 @@ inference:
   size: -1
   reverse: false
   FirstFrameIsNotExemplar: false
-  batch_size: 8
+  batch_size: 1
+  video_batch: 8
 
 metrics:
   psnr: true
@@ -47,7 +48,7 @@ metrics:
   cdc: false
 
 logging:
-  sample_videos: 5
+  sample_videos: 8
   sample_frames: 3
 
 output:

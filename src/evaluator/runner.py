@@ -51,7 +51,7 @@ def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def _save_output_frame(out_dir: str, vid_name: str, frame_name: str, rgb, prob):
+def _save_output_frame(out_dir: str, vid_name: str, frame_name: str, rgb, prob) -> np.ndarray:
     this_out_path = os.path.join(out_dir, vid_name)
     os.makedirs(this_out_path, exist_ok=True)
 
@@ -60,6 +60,7 @@ def _save_output_frame(out_dir: str, vid_name: str, frame_name: str, rgb, prob):
 
     out_img = Image.fromarray(out_mask_final)
     out_img.save(os.path.join(this_out_path, f"{Path(frame_name).stem}.png"))
+    return out_mask_final
 
 
 def _list_video_dirs(root: str) -> List[str]:
@@ -97,6 +98,42 @@ def _write_videos_from_frames(frames_root: str, videos_root: str, fps: int = 24,
         if max_videos is not None and len(outputs) >= max_videos:
             break
     return outputs
+
+
+def _chunked(seq: List, size: int) -> List[List]:
+    if size <= 0:
+        return [seq]
+    return [seq[i:i + size] for i in range(0, len(seq), size)]
+
+
+def _bw_from_l(lab_l: torch.Tensor) -> np.ndarray:
+    zeros = torch.zeros_like(lab_l)
+    lab = torch.cat([lab_l, zeros, zeros], dim=0)
+    bw = lab2rgb_transform_PIL(lab)
+    return (bw * 255).astype(np.uint8)
+
+
+def _load_gt_frame(gt_root: str, vid_name: str, frame: str, target_hw: tuple[int, int]) -> np.ndarray | None:
+    if not gt_root:
+        return None
+    gt_path = os.path.join(gt_root, vid_name, frame)
+    if not os.path.exists(gt_path):
+        return None
+    img = Image.open(gt_path).convert("RGB")
+    h, w = target_hw
+    if img.size != (w, h):
+        img = img.resize((w, h), resample=Image.BILINEAR)
+    return np.array(img)
+
+
+def _make_triplet_frame(bw: np.ndarray, gt: np.ndarray | None, pred: np.ndarray) -> np.ndarray:
+    if gt is None:
+        gt = np.zeros_like(pred)
+    if bw.shape[:2] != pred.shape[:2]:
+        bw = cv2.resize(bw, (pred.shape[1], pred.shape[0]), interpolation=cv2.INTER_LINEAR)
+    if gt.shape[:2] != pred.shape[:2]:
+        gt = cv2.resize(gt, (pred.shape[1], pred.shape[0]), interpolation=cv2.INTER_LINEAR)
+    return np.concatenate([bw, gt, pred], axis=1)
 
 
 def main() -> None:
@@ -145,9 +182,12 @@ def main() -> None:
     size = int(inference_cfg.get("size", -1))
     reverse = bool(inference_cfg.get("reverse", False))
     first_frame_not_exemplar = bool(inference_cfg.get("FirstFrameIsNotExemplar", False))
-    batch_size = int(inference_cfg.get("batch_size", 1))
-    if batch_size < 1:
-        batch_size = 1
+    frame_batch_size = int(inference_cfg.get("batch_size", 1))
+    if frame_batch_size < 1:
+        frame_batch_size = 1
+    video_batch = int(inference_cfg.get("video_batch", 1))
+    if video_batch < 1:
+        video_batch = 1
     exemplar_path = inference_cfg.get("exemplar_path")
     if exemplar_path:
         exemplar_path = str(Path(exemplar_path).expanduser())
@@ -191,86 +231,154 @@ def main() -> None:
 
     network = _load_model(model_path, config)
 
-    meta_loader = meta_dataset.get_datasets()
-    total_videos = len(meta_dataset)
+    meta_loader = list(meta_dataset.get_datasets())
+    total_videos = len(meta_loader)
+    video_batches = _chunked(meta_loader, video_batch)
 
-    for vid_idx, vid_reader in enumerate(meta_loader, start=1):
-        loader = DataLoader(
-            vid_reader,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=2,
-            collate_fn=_identity_collate,
-        )
-        vid_name = vid_reader.vid_name
-        vid_length = len(vid_reader)
-        print(f"[eval] Video {vid_idx}/{total_videos}: {vid_name} ({vid_length} frames)", flush=True)
-        config["enable_long_term_count_usage"] = (
-            config["enable_long_term"] and
-            (vid_length / (config["max_mid_term_frames"] - config["min_mid_term_frames"]) * config["num_prototypes"])
-            >= config["max_long_term_elements"]
-        )
+    logging_cfg = cfg.get("logging", {})
+    sample_videos = int(logging_cfg.get("sample_videos", 1))
+    sample_frames = int(logging_cfg.get("sample_frames", 3))
+    video_fps = int(cfg.get("output", {}).get("video_fps", 24))
 
-        processor = InferenceCore(network, config=config)
-        first_mask_loaded = False
-        frame_idx = 0
-        for batch in loader:
-            for data in batch:
-                end_frame = frame_idx == (vid_length - 1)
-                with torch.cuda.amp.autocast(enabled=not config["benchmark"]):
-                    rgb = data["rgb"].cuda()
-                    msk = data.get("mask")
-                    if not config["FirstFrameIsNotExemplar"]:
-                        msk = msk[1:3, :, :] if msk is not None else None
+    triplet_dir = os.path.join(output_root, "_videos_triplet")
+    os.makedirs(triplet_dir, exist_ok=True)
+    triplet_writers = {}
+    triplet_paths = {}
 
-                    info = data["info"]
-                    frame = info["frame"]
-                    shape = info["shape"]
-                    need_resize = info["need_resize"]
+    log_video_names = set()
+    if sample_videos > 0:
+        for reader in meta_loader[:sample_videos]:
+            log_video_names.add(reader.vid_name)
 
-                    if not first_mask_loaded:
+    for batch_idx, readers in enumerate(video_batches, start=1):
+        batch_start = (batch_idx - 1) * video_batch + 1
+        batch_end = batch_start + len(readers) - 1
+        print(f"[eval] Batch {batch_idx}/{len(video_batches)}: videos {batch_start}-{batch_end}/{total_videos}", flush=True)
+
+        states = []
+        for vid_offset, vid_reader in enumerate(readers):
+            vid_idx = batch_start + vid_offset
+            vid_name = vid_reader.vid_name
+            vid_length = len(vid_reader)
+            print(f"[eval] Video {vid_idx}/{total_videos}: {vid_name} ({vid_length} frames)", flush=True)
+
+            video_config = dict(config)
+            video_config["enable_long_term_count_usage"] = (
+                video_config["enable_long_term"] and
+                (vid_length / (video_config["max_mid_term_frames"] - video_config["min_mid_term_frames"]) * video_config["num_prototypes"])
+                >= video_config["max_long_term_elements"]
+            )
+
+            loader = DataLoader(
+                vid_reader,
+                batch_size=frame_batch_size,
+                shuffle=False,
+                num_workers=2,
+                collate_fn=_identity_collate,
+            )
+            state = {
+                "vid_reader": vid_reader,
+                "vid_name": vid_name,
+                "vid_length": vid_length,
+                "loader_iter": iter(loader),
+                "processor": InferenceCore(network, config=video_config),
+                "first_mask_loaded": False,
+                "frame_idx": 0,
+                "done": False,
+                "log_video": vid_name in log_video_names and eval_ref_root is not None,
+            }
+            if state["log_video"]:
+                triplet_path = os.path.join(triplet_dir, f"{vid_name}_triplet.mp4")
+                triplet_paths[vid_name] = triplet_path
+            states.append(state)
+
+        while True:
+            active = [s for s in states if not s["done"]]
+            if not active:
+                break
+            for state in active:
+                try:
+                    batch = next(state["loader_iter"])
+                except StopIteration:
+                    state["done"] = True
+                    continue
+
+                for data in batch:
+                    frame_idx = state["frame_idx"]
+                    end_frame = frame_idx == (state["vid_length"] - 1)
+                    with torch.cuda.amp.autocast(enabled=not config["benchmark"]):
+                        rgb = data["rgb"].cuda()
+                        msk = data.get("mask")
+                        if not config["FirstFrameIsNotExemplar"]:
+                            msk = msk[1:3, :, :] if msk is not None else None
+
+                        info = data["info"]
+                        frame = info["frame"]
+                        shape = info["shape"]
+                        need_resize = info["need_resize"]
+
+                        if not state["first_mask_loaded"]:
+                            if msk is not None:
+                                state["first_mask_loaded"] = True
+                            else:
+                                state["frame_idx"] += 1
+                                if (state["frame_idx"] % 10 == 0) or end_frame:
+                                    print(f"[eval] {state['vid_name']}: {state['frame_idx']}/{state['vid_length']} frames", flush=True)
+                                continue
+
+                        if config["flip"]:
+                            rgb = torch.flip(rgb, dims=[-1])
+                            msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+
                         if msk is not None:
-                            first_mask_loaded = True
+                            msk = torch.Tensor(msk).cuda()
+                            if need_resize:
+                                msk = state["vid_reader"].resize_mask(msk.unsqueeze(0))[0]
+                            state["processor"].set_all_labels(list(range(1, 3)))
+                            labels = range(1, 3)
                         else:
-                            frame_idx += 1
-                            if (frame_idx % 10 == 0) or end_frame:
-                                print(f"[eval] {vid_name}: {frame_idx}/{vid_length} frames", flush=True)
-                            continue
+                            labels = None
 
-                    if config["flip"]:
-                        rgb = torch.flip(rgb, dims=[-1])
-                        msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+                        if config["FirstFrameIsNotExemplar"]:
+                            prob = state["processor"].step_AnyExemplar(
+                                rgb,
+                                msk[:1, :, :].repeat(3, 1, 1) if msk is not None else None,
+                                msk[1:3, :, :] if msk is not None else None,
+                                labels,
+                                end=end_frame,
+                            )
+                        else:
+                            prob = state["processor"].step(rgb, msk, labels, end=end_frame)
 
-                    if msk is not None:
-                        msk = torch.Tensor(msk).cuda()
                         if need_resize:
-                            msk = vid_reader.resize_mask(msk.unsqueeze(0))[0]
-                        processor.set_all_labels(list(range(1, 3)))
-                        labels = range(1, 3)
-                    else:
-                        labels = None
+                            prob = F.interpolate(prob.unsqueeze(1), shape, mode="bilinear", align_corners=False)[:, 0]
 
-                    if config["FirstFrameIsNotExemplar"]:
-                        prob = processor.step_AnyExemplar(
-                            rgb,
-                            msk[:1, :, :].repeat(3, 1, 1) if msk is not None else None,
-                            msk[1:3, :, :] if msk is not None else None,
-                            labels,
-                            end=end_frame,
-                        )
-                    else:
-                        prob = processor.step(rgb, msk, labels, end=end_frame)
+                        if config["flip"]:
+                            prob = torch.flip(prob, dims=[-1])
 
-                    if need_resize:
-                        prob = F.interpolate(prob.unsqueeze(1), shape, mode="bilinear", align_corners=False)[:, 0]
+                        pred_img = _save_output_frame(output_root, state["vid_name"], frame, rgb, prob)
 
-                    if config["flip"]:
-                        prob = torch.flip(prob, dims=[-1])
+                    if state["log_video"]:
+                        bw_img = _bw_from_l(rgb[:1, :, :])
+                        gt_img = _load_gt_frame(eval_ref_root, state["vid_name"], frame, pred_img.shape[:2])
+                        triplet = _make_triplet_frame(bw_img, gt_img, pred_img)
+                        if state["vid_name"] not in triplet_writers:
+                            h, w = triplet.shape[:2]
+                            writer = cv2.VideoWriter(
+                                triplet_paths[state["vid_name"]],
+                                cv2.VideoWriter_fourcc(*"mp4v"),
+                                video_fps,
+                                (w, h),
+                            )
+                            triplet_writers[state["vid_name"]] = writer
+                        triplet_writers[state["vid_name"]].write(triplet[:, :, ::-1])
 
-                    _save_output_frame(output_root, vid_name, frame, rgb, prob)
-                frame_idx += 1
-                if (frame_idx % 10 == 0) or end_frame:
-                    print(f"[eval] {vid_name}: {frame_idx}/{vid_length} frames", flush=True)
+                    state["frame_idx"] += 1
+                    if (state["frame_idx"] % 10 == 0) or end_frame:
+                        print(f"[eval] {state['vid_name']}: {state['frame_idx']}/{state['vid_length']} frames", flush=True)
+
+    for writer in triplet_writers.values():
+        writer.release()
 
     metrics_cfg = cfg.get("metrics", {})
     metrics = {}
@@ -312,10 +420,6 @@ def main() -> None:
     if metrics:
         run.log(metrics)
 
-    logging_cfg = cfg.get("logging", {})
-    sample_videos = int(logging_cfg.get("sample_videos", 1))
-    sample_frames = int(logging_cfg.get("sample_frames", 3))
-
     pred_samples = sample_images(output_root, max_videos=sample_videos, max_frames=sample_frames)
     if pred_samples:
         run.log({
@@ -329,22 +433,23 @@ def main() -> None:
                 "samples/gt": [wandb.Image(img, caption=cap) for img, cap in gt_samples]
             })
 
+    if triplet_paths:
+        triplet_logs = {
+            f"samples/video_triplet/{vid}": wandb.Video(path, format="mp4")
+            for vid, path in triplet_paths.items()
+            if os.path.exists(path)
+        }
+        if triplet_logs:
+            run.log(triplet_logs)
+
     output_cfg = cfg.get("output", {})
     create_videos = bool(output_cfg.get("create_videos", False))
     video_fps = int(output_cfg.get("video_fps", 24))
     videos_dir = None
     video_paths = []
-    if create_videos or sample_videos > 0:
+    if create_videos:
         videos_dir = os.path.join(output_root, "_videos")
-        max_videos = None if create_videos else sample_videos
-        video_paths = _write_videos_from_frames(output_root, videos_dir, fps=video_fps, max_videos=max_videos)
-        if sample_videos > 0 and video_paths:
-            run.log({
-                "samples/video": [
-                    wandb.Video(path, format="mp4")
-                    for path in video_paths[:sample_videos]
-                ]
-            })
+        video_paths = _write_videos_from_frames(output_root, videos_dir, fps=video_fps, max_videos=None)
 
     s3_cfg = require_s3_cfg(cfg, "evaluator")
     client = get_s3_client(s3_cfg)
@@ -356,7 +461,7 @@ def main() -> None:
         "outputs": {},
     }
     outputs_prefix = f"{stage_prefix}/outputs"
-    ignore = {"_videos"} if videos_dir else None
+    ignore = {"_videos", "_videos_triplet"} if videos_dir else {"_videos_triplet"}
     outputs_count = upload_dir(client, bucket, output_root, outputs_prefix, s3_cfg, ignore=ignore)
     s3_info["outputs"]["frames_uri"] = f"s3://{bucket}/{outputs_prefix}"
     s3_info["outputs"]["frames_files"] = outputs_count
