@@ -5,11 +5,12 @@ import json
 from shared.inference.data.video_reader import VideoReader_221128_TransColorization
 
 class DAVISTestDataset_221128_TransColorization_batch:
-    def __init__(self, data_root, imset='2017/val.txt', size=-1, args=None, subset=None):
+    def __init__(self, data_root, imset='2017/val.txt', size=-1, args=None, subset=None, exemplar_path=None):
         self.image_dir = data_root
         self.mask_dir = imset
         self.size_dir = data_root
         self.size = size
+        self.exemplar_path = exemplar_path
 
         self.vid_list =  [clip_name for clip_name in sorted(os.listdir(data_root)) if clip_name != '.DS_Store' and not clip_name.startswith('.')]
         self.ref_img_list = [clip_name for clip_name in sorted(os.listdir(imset)) if clip_name != '.DS_Store' and not clip_name.startswith('.')]
@@ -34,7 +35,8 @@ class DAVISTestDataset_221128_TransColorization_batch:
                 path.join(self.mask_dir, video),
                 size=self.size,
                 size_dir=path.join(self.size_dir, video),
-                args=self.args
+                args=self.args,
+                exemplar_path=self.exemplar_path
             )
 
     def __len__(self):

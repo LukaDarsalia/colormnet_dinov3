@@ -14,7 +14,7 @@ class VideoReader_221128_TransColorization(Dataset):
     """
     This class is used to read a video, one frame at a time
     """
-    def __init__(self, vid_name, image_dir, mask_dir, size=-1, to_save=None, use_all_mask=False, size_dir=None, args=None):
+    def __init__(self, vid_name, image_dir, mask_dir, size=-1, to_save=None, use_all_mask=False, size_dir=None, args=None, exemplar_path=None):
         """
         image_dir - points to a directory of jpg images
         mask_dir - points to a directory of png masks
@@ -37,9 +37,20 @@ class VideoReader_221128_TransColorization(Dataset):
 
         flag_reverse = getattr(args, 'reverse', False) if args is not None else False
         self.frames = [img for img in sorted(os.listdir(self.image_dir), reverse=flag_reverse) if (img.endswith('.jpg') or img.endswith('.png')) and not img.startswith('.')]
-        self.palette = Image.open(path.join(mask_dir, sorted([msk for msk in os.listdir(mask_dir) if not msk.startswith('.')])[0])).getpalette()
-        self.first_gt_path = path.join(self.mask_dir, sorted([msk for msk in os.listdir(self.mask_dir) if not msk.startswith('.')])[0])
-        self.suffix = self.first_gt_path.split('.')[-1]
+        self.mask_frames = [
+            msk for msk in sorted(os.listdir(self.mask_dir))
+            if not msk.startswith('.') and (msk.endswith('.png') or msk.endswith('.jpg') or msk.endswith('.jpeg'))
+        ]
+        if self.mask_frames:
+            self.first_gt_path = path.join(self.mask_dir, self.mask_frames[0])
+            self.palette = Image.open(self.first_gt_path).getpalette()
+            self.suffix = self.first_gt_path.split('.')[-1]
+        else:
+            self.first_gt_path = None
+            self.palette = None
+            self.suffix = None
+
+        self.exemplar_path = exemplar_path
 
         if size < 0:
             self.im_transform = transforms.Compose([
@@ -74,15 +85,21 @@ class VideoReader_221128_TransColorization(Dataset):
             size_im = Image.open(size_path).convert('RGB')
             shape = np.array(size_im).shape[:2]
 
-        gt_path = path.join(self.mask_dir, sorted(os.listdir(self.mask_dir))[idx]) if idx < len(os.listdir(self.mask_dir)) else None 
+        gt_path = path.join(self.mask_dir, self.mask_frames[idx]) if idx < len(self.mask_frames) else None 
 
         img = self.im_transform(img)
         img_l = img[:1,:,:]
         img_lll = img_l.repeat(3,1,1)
 
-        load_mask = self.use_all_mask or (gt_path == self.first_gt_path)
-        if load_mask and path.exists(gt_path):
-            mask = Image.open(gt_path).convert('RGB')
+        if self.exemplar_path:
+            load_mask = (idx == 0)
+            mask_path = self.exemplar_path
+        else:
+            load_mask = self.use_all_mask or (gt_path == self.first_gt_path)
+            mask_path = gt_path
+
+        if load_mask and mask_path and path.exists(mask_path):
+            mask = Image.open(mask_path).convert('RGB')
             
             # 用 PIL 先 resize 成和 img 尺寸一致
             mask = mask.resize((img.shape[2], img.shape[1]), Image.BILINEAR)

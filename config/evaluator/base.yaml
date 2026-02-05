@@ -33,18 +33,19 @@ inference:
   flip: false
   size: -1
   reverse: false
-  FirstFrameIsNotExemplar: false
+  FirstFrameIsNotExemplar: true
+  exemplar_path: ref/blackswan/00000.png
 
 metrics:
   psnr: true
   ssim: true
-  lpips: false
+  lpips: true
   colorfulness: false
-  fid: false
+  fid: true
   cdc: false
 
 logging:
-  sample_videos: 1
+  sample_videos: 5
   sample_frames: 3
 
 output:

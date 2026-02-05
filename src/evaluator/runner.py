@@ -69,7 +69,7 @@ def _list_video_dirs(root: str) -> List[str]:
     ]
 
 
-def _write_videos_from_frames(frames_root: str, videos_root: str, fps: int = 24) -> list[str]:
+def _write_videos_from_frames(frames_root: str, videos_root: str, fps: int = 24, max_videos: int | None = None) -> list[str]:
     os.makedirs(videos_root, exist_ok=True)
     outputs = []
     for vid in _list_video_dirs(frames_root):
@@ -90,6 +90,8 @@ def _write_videos_from_frames(frames_root: str, videos_root: str, fps: int = 24)
             writer.write(img)
         writer.release()
         outputs.append(out_path)
+        if max_videos is not None and len(outputs) >= max_videos:
+            break
     return outputs
 
 
@@ -139,6 +141,15 @@ def main() -> None:
     size = int(inference_cfg.get("size", -1))
     reverse = bool(inference_cfg.get("reverse", False))
     first_frame_not_exemplar = bool(inference_cfg.get("FirstFrameIsNotExemplar", False))
+    exemplar_path = inference_cfg.get("exemplar_path")
+    if exemplar_path:
+        exemplar_path = str(Path(exemplar_path).expanduser())
+        if not os.path.isabs(exemplar_path):
+            exemplar_path = str((_REPO_ROOT / exemplar_path).resolve())
+        if not Path(exemplar_path).is_file():
+            raise FileNotFoundError(f"Exemplar image not found: {exemplar_path}")
+        if not first_frame_not_exemplar:
+            first_frame_not_exemplar = True
 
     config = {
         "enable_long_term": not bool(inference_cfg.get("disable_long_term", False)),
@@ -168,6 +179,7 @@ def main() -> None:
         imset=eval_ref_root or eval_input_root,
         size=size,
         args=args_ns,
+        exemplar_path=exemplar_path,
     )
 
     network = _load_model(model_path, config)
@@ -296,10 +308,20 @@ def main() -> None:
 
     output_cfg = cfg.get("output", {})
     create_videos = bool(output_cfg.get("create_videos", False))
+    video_fps = int(output_cfg.get("video_fps", 24))
     videos_dir = None
-    if create_videos:
+    video_paths = []
+    if create_videos or sample_videos > 0:
         videos_dir = os.path.join(output_root, "_videos")
-        _write_videos_from_frames(output_root, videos_dir, fps=int(output_cfg.get("video_fps", 24)))
+        max_videos = None if create_videos else sample_videos
+        video_paths = _write_videos_from_frames(output_root, videos_dir, fps=video_fps, max_videos=max_videos)
+        if sample_videos > 0 and video_paths:
+            run.log({
+                "samples/video": [
+                    wandb.Video(path, fps=video_fps, format="mp4")
+                    for path in video_paths[:sample_videos]
+                ]
+            })
 
     s3_cfg = require_s3_cfg(cfg, "evaluator")
     client = get_s3_client(s3_cfg)
@@ -316,9 +338,10 @@ def main() -> None:
     s3_info["outputs"]["frames_uri"] = f"s3://{bucket}/{outputs_prefix}"
     s3_info["outputs"]["frames_files"] = outputs_count
 
-    if videos_dir:
+    videos_dir_for_upload = videos_dir if create_videos else None
+    if videos_dir_for_upload:
         videos_prefix = f"{stage_prefix}/videos"
-        videos_count = upload_dir(client, bucket, videos_dir, videos_prefix, s3_cfg)
+        videos_count = upload_dir(client, bucket, videos_dir_for_upload, videos_prefix, s3_cfg)
         s3_info["outputs"]["videos_uri"] = f"s3://{bucket}/{videos_prefix}"
         s3_info["outputs"]["videos_files"] = videos_count
 
