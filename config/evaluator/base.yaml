@@ -38,6 +38,7 @@ inference:
   FirstFrameIsNotExemplar: false
   batch_size: 1
   video_batch: 8
+  skip_existing: true
 
 metrics:
   psnr: true

@@ -136,6 +136,26 @@ def _make_triplet_frame(bw: np.ndarray, gt: np.ndarray | None, pred: np.ndarray)
     return np.concatenate([bw, gt, pred], axis=1)
 
 
+def _outputs_complete(output_root: str, vid_reader) -> bool:
+    out_dir = os.path.join(output_root, vid_reader.vid_name)
+    if not os.path.isdir(out_dir):
+        return False
+    expected = [f"{Path(name).stem}.png" for name in getattr(vid_reader, "frames", [])]
+    if not expected:
+        return False
+    for name in expected:
+        if not os.path.exists(os.path.join(out_dir, name)):
+            return False
+    return True
+
+
+def _load_pred_frame(output_root: str, vid_name: str, frame: str) -> np.ndarray | None:
+    pred_path = os.path.join(output_root, vid_name, f"{Path(frame).stem}.png")
+    if not os.path.exists(pred_path):
+        return None
+    return np.array(Image.open(pred_path).convert("RGB"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -188,6 +208,7 @@ def main() -> None:
     video_batch = int(inference_cfg.get("video_batch", 1))
     if video_batch < 1:
         video_batch = 1
+    skip_existing = bool(inference_cfg.get("skip_existing", False))
     exemplar_path = inference_cfg.get("exemplar_path")
     if exemplar_path:
         exemplar_path = str(Path(exemplar_path).expanduser())
@@ -276,20 +297,28 @@ def main() -> None:
                 num_workers=2,
                 collate_fn=_identity_collate,
             )
+            outputs_done = skip_existing and _outputs_complete(output_root, vid_reader)
             state = {
                 "vid_reader": vid_reader,
                 "vid_name": vid_name,
                 "vid_length": vid_length,
                 "loader_iter": iter(loader),
                 "processor": InferenceCore(network, config=video_config),
-                "first_mask_loaded": False,
+                "first_mask_loaded": outputs_done,
                 "frame_idx": 0,
                 "done": False,
                 "log_video": vid_name in log_video_names and eval_ref_root is not None,
+                "skip_inference": outputs_done,
             }
             if state["log_video"]:
                 triplet_path = os.path.join(triplet_dir, f"{vid_name}_triplet.mp4")
                 triplet_paths[vid_name] = triplet_path
+            if outputs_done:
+                if not state["log_video"]:
+                    print(f"[eval] {vid_name}: outputs already exist, skipping generation.", flush=True)
+                    state["done"] = True
+                else:
+                    print(f"[eval] {vid_name}: outputs already exist, reusing for triplet video.", flush=True)
             states.append(state)
 
         while True:
@@ -326,37 +355,42 @@ def main() -> None:
                                     print(f"[eval] {state['vid_name']}: {state['frame_idx']}/{state['vid_length']} frames", flush=True)
                                 continue
 
-                        if config["flip"]:
-                            rgb = torch.flip(rgb, dims=[-1])
-                            msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+                        pred_img = None
+                        if state["skip_inference"]:
+                            pred_img = _load_pred_frame(output_root, state["vid_name"], frame)
 
-                        if msk is not None:
-                            msk = torch.Tensor(msk).cuda()
+                        if pred_img is None:
+                            if config["flip"]:
+                                rgb = torch.flip(rgb, dims=[-1])
+                                msk = torch.flip(msk, dims=[-1]) if msk is not None else None
+
+                            if msk is not None:
+                                msk = torch.Tensor(msk).cuda()
+                                if need_resize:
+                                    msk = state["vid_reader"].resize_mask(msk.unsqueeze(0))[0]
+                                state["processor"].set_all_labels(list(range(1, 3)))
+                                labels = range(1, 3)
+                            else:
+                                labels = None
+
+                            if config["FirstFrameIsNotExemplar"]:
+                                prob = state["processor"].step_AnyExemplar(
+                                    rgb,
+                                    msk[:1, :, :].repeat(3, 1, 1) if msk is not None else None,
+                                    msk[1:3, :, :] if msk is not None else None,
+                                    labels,
+                                    end=end_frame,
+                                )
+                            else:
+                                prob = state["processor"].step(rgb, msk, labels, end=end_frame)
+
                             if need_resize:
-                                msk = state["vid_reader"].resize_mask(msk.unsqueeze(0))[0]
-                            state["processor"].set_all_labels(list(range(1, 3)))
-                            labels = range(1, 3)
-                        else:
-                            labels = None
+                                prob = F.interpolate(prob.unsqueeze(1), shape, mode="bilinear", align_corners=False)[:, 0]
 
-                        if config["FirstFrameIsNotExemplar"]:
-                            prob = state["processor"].step_AnyExemplar(
-                                rgb,
-                                msk[:1, :, :].repeat(3, 1, 1) if msk is not None else None,
-                                msk[1:3, :, :] if msk is not None else None,
-                                labels,
-                                end=end_frame,
-                            )
-                        else:
-                            prob = state["processor"].step(rgb, msk, labels, end=end_frame)
+                            if config["flip"]:
+                                prob = torch.flip(prob, dims=[-1])
 
-                        if need_resize:
-                            prob = F.interpolate(prob.unsqueeze(1), shape, mode="bilinear", align_corners=False)[:, 0]
-
-                        if config["flip"]:
-                            prob = torch.flip(prob, dims=[-1])
-
-                        pred_img = _save_output_frame(output_root, state["vid_name"], frame, rgb, prob)
+                            pred_img = _save_output_frame(output_root, state["vid_name"], frame, rgb, prob)
 
                     if state["log_video"]:
                         bw_img = _bw_from_l(rgb[:1, :, :])
