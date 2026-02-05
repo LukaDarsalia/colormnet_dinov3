@@ -185,11 +185,13 @@ def main() -> None:
     network = _load_model(model_path, config)
 
     meta_loader = meta_dataset.get_datasets()
+    total_videos = len(meta_dataset)
 
-    for vid_reader in meta_loader:
+    for vid_idx, vid_reader in enumerate(meta_loader, start=1):
         loader = DataLoader(vid_reader, batch_size=1, shuffle=False, num_workers=2)
         vid_name = vid_reader.vid_name
         vid_length = len(loader)
+        print(f"[eval] Video {vid_idx}/{total_videos}: {vid_name} ({vid_length} frames)", flush=True)
         config["enable_long_term_count_usage"] = (
             config["enable_long_term"] and
             (vid_length / (config["max_mid_term_frames"] - config["min_mid_term_frames"]) * config["num_prototypes"])
@@ -248,6 +250,8 @@ def main() -> None:
                     prob = torch.flip(prob, dims=[-1])
 
                 _save_output_frame(output_root, vid_name, frame, rgb, prob)
+            if (ti + 1) % 10 == 0 or (ti + 1) == vid_length:
+                print(f"[eval] {vid_name}: {ti + 1}/{vid_length} frames", flush=True)
 
     metrics_cfg = cfg.get("metrics", {})
     metrics = {}
